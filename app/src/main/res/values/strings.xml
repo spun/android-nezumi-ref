@@ -1,0 +1,27 @@
+<resources>
+    <string name="app_name">Nezumi</string>
+
+    <!-- Credits dialog -->
+    <string name="credits">About</string>
+    <string name="credits_dialog_title">About</string>
+    <string name="credits_dialog_message"><div>Logo from <a href="https://twemoji.twitter.com/" title="Twemoji">Twemoji</a> licensed under <a href="https://creativecommons.org/licenses/by/4.0/" title="CC-BY 4.0">CC-BY 4.0</a></div></string>
+
+    <!-- Input fragment -->
+    <string name="input_fragment_hint">Video url</string>
+    <string name="input_fragment_error">Invalid url</string>
+    <string name="input_fragment_button">Go</string>
+
+    <!-- Details fragment -->
+    <string name="details_fragment_title">Details</string>
+    <string name="details_fragment_hint">Available formats</string>
+    <string name="details_fragment_download_button">Download</string>
+    <string name="open_in_browser_button">Open in browser</string>
+    <string name="start_download_button">Start download</string>
+    <string name="copied_to_clipboard_message">URL copied to clipboard</string>
+
+    <!-- Download service notification -->
+    <string name="download_notification_channel">download_notification_channel</string>
+    <string name="download_notification_channel_description">download_notification_channel_description</string>
+    <string name="write_permission_rationale">Write permission needed to download</string>
+
+</resources>

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/inputFragment"
+    tools:ignore="UnusedNavigation">
+
+    <fragment
+        android:id="@+id/timelineFragment"
+        android:name="com.spundev.nezumi.ui.timeline.TimelineFragment"
+        android:label="timeline_fragment"
+        tools:layout="@layout/timeline_fragment" />
+    <fragment
+        android:id="@+id/dropdownDetailsFragment"
+        android:name="com.spundev.nezumi.ui.details.DetailsOldFragment"
+        android:label="@string/details_fragment_title"
+        tools:layout="@layout/details_old_fragment">
+        <argument
+            android:name="videoId"
+            app:argType="string" />
+    </fragment>
+    <fragment
+        android:id="@+id/inputFragment"
+        android:name="com.spundev.nezumi.ui.input.InputFragment"
+        android:label="@string/app_name"
+        tools:layout="@layout/input_fragment">
+        <action
+            android:id="@+id/action_inputFragment_to_dropdownDetailsFragment"
+            app:destination="@id/dropdownDetailsFragment"
+            app:launchSingleTop="true" />
+        <argument
+            android:name="videoUrl"
+            app:argType="string"
+            app:nullable="true" />
+        <action
+            android:id="@+id/action_inputFragment_to_listDetailsFragment"
+            app:destination="@id/listDetailsFragment" />
+    </fragment>
+    <fragment
+        android:id="@+id/listDetailsFragment"
+        android:name="com.spundev.nezumi.ui.details.DetailsFragment"
+        android:label="@string/details_fragment_title"
+        tools:layout="@layout/details_fragment" >
+        <argument
+            android:name="videoId"
+            app:argType="string" />
+    </fragment>
+</navigation>
