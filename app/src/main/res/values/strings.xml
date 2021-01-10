@@ -20,8 +20,12 @@
     <string name="copied_to_clipboard_message">URL copied to clipboard</string>
 
     <!-- Download service notification -->
-    <string name="download_notification_channel">download_notification_channel</string>
-    <string name="download_notification_channel_description">download_notification_channel_description</string>
+    <string name="download_notification_channel_id">download_notification_channel</string>
+    <string name="download_notification_channel_name">Downloads</string>
+    <string name="download_notification_channel_description">File downloads</string>
+    <string name="download_notification_title">Downloading file</string>
+    <string name="download_notification_cancel_action">Stop download</string>
+
     <string name="write_permission_rationale">Write permission needed to download</string>
 
 </resources>

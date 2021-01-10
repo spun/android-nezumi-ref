@@ -1,20 +1,20 @@
 package com.spundev.nezumi.ui.details
 
 import android.app.Application
-import android.content.Intent
 import android.net.Uri
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.liveData
 import androidx.lifecycle.switchMap
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.spundev.nezumi.model.Format
 import com.spundev.nezumi.model.PlayerResponse
-import com.spundev.nezumi.service.DownloadService
+import com.spundev.nezumi.service.DownloadWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonConfiguration
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLDecoder
@@ -59,23 +59,23 @@ class DetailsViewModel(val app: Application) : AndroidViewModel(app) {
         // Build "get_video_info" url
         @Suppress("SpellCheckingInspection")
         val requestUrl = Uri.Builder()
-                .scheme("https")
-                .authority("www.youtube.com")
-                .appendPath("get_video_info")
-                .appendQueryParameter("video_id", videoId)
-                .appendQueryParameter("ps", "default")
-                .appendQueryParameter("eurl", "")
-                .appendQueryParameter("gl", "US")
-                .appendQueryParameter("hl", "en")
-                .appendQueryParameter("el", "detailpage")
-                .appendQueryParameter("disable_polymer", "true")
-                .build()
-                .toString()
+            .scheme("https")
+            .authority("www.youtube.com")
+            .appendPath("get_video_info")
+            .appendQueryParameter("video_id", videoId)
+            .appendQueryParameter("ps", "default")
+            .appendQueryParameter("eurl", "")
+            .appendQueryParameter("gl", "US")
+            .appendQueryParameter("hl", "en")
+            .appendQueryParameter("el", "detailpage")
+            .appendQueryParameter("disable_polymer", "true")
+            .build()
+            .toString()
 
         // Create a new request
         val request = Request.Builder()
-                .url(requestUrl)
-                .build()
+            .url(requestUrl)
+            .build()
 
         return withContext(Dispatchers.IO) {
             // Fetch the data
@@ -93,12 +93,8 @@ class DetailsViewModel(val app: Application) : AndroidViewModel(app) {
                 }
             }?.let { playerResponseDecoded ->
                 // Parse JSON allowing unknown keys
-                val jsonConfiguration = JsonConfiguration(ignoreUnknownKeys = true)
-
-                Json(jsonConfiguration).parse(
-                        PlayerResponse.serializer(),
-                        playerResponseDecoded
-                )
+                val format = Json { ignoreUnknownKeys = true }
+                format.decodeFromString(PlayerResponse.serializer(), playerResponseDecoded)
             }?.let {
                 // Return base formats + adaptive formats
                 it.streamingData.formats + it.streamingData.adaptiveFormats
@@ -108,12 +104,13 @@ class DetailsViewModel(val app: Application) : AndroidViewModel(app) {
 
 
     fun downloadWithOkHTTP(url: String) {
-        val downloadIntent = Intent(app, DownloadService::class.java)
-        downloadIntent.putExtra(DownloadService.DOWNLOAD_URL, url)
-        ContextCompat.startForegroundService(app, downloadIntent)
+        val downloadData = workDataOf(DownloadWorker.DOWNLOAD_URL to url)
+        val downloadWorkRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
+            .setInputData(downloadData)
+            .build()
+        WorkManager.getInstance(app)
+            .enqueue(downloadWorkRequest)
     }
-
-
 
 
 //    // Note: DownloadManager deletes the files downloaded by the app after this one is

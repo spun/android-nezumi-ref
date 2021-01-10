@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -39,7 +40,7 @@ class DetailsFragment : Fragment() {
         inflater: LayoutInflater,
         container: ViewGroup?,
         savedInstanceState: Bundle?
-    ): View? {
+    ): View {
         binding = DetailsFragmentBinding.inflate(layoutInflater)
         return binding.root
     }
@@ -88,14 +89,14 @@ class DetailsFragment : Fragment() {
 
 
     private fun download(url: String) {
+        // Don't unnecessarily request storage-related permissions for devices that run Android 10 or higher.
+        val isScopedStorageAvailable = Build.VERSION.SDK_INT >= 29
+        val isWriteExternalStorageGranted = ContextCompat.checkSelfPermission(
+            requireContext(),
+            Manifest.permission.WRITE_EXTERNAL_STORAGE
+        ) == PackageManager.PERMISSION_GRANTED
 
-        // Here, thisActivity is the current activity
-        if (ContextCompat.checkSelfPermission(
-                requireContext(),
-                Manifest.permission.WRITE_EXTERNAL_STORAGE
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-
+        if (!isScopedStorageAvailable && !isWriteExternalStorageGranted) {
             // Permission is not granted
             // Should we show an explanation?
             if (shouldShowRequestPermissionRationale(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {

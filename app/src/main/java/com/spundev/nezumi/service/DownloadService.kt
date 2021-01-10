@@ -40,7 +40,7 @@ class DownloadService : IntentService("DownloadService") {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val notificationChannel = NotificationChannel(
                 DOWNLOADING_CHANNEL,
-                getString(R.string.download_notification_channel),
+                getString(R.string.download_notification_channel_name),
                 NotificationManager.IMPORTANCE_LOW
             )
                 .apply {
