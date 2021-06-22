@@ -69,6 +69,9 @@ class DetailsViewModel(val app: Application) : AndroidViewModel(app) {
             .appendQueryParameter("hl", "en")
             .appendQueryParameter("el", "detailpage")
             .appendQueryParameter("disable_polymer", "true")
+            .appendQueryParameter("html5", "1")
+            .appendQueryParameter("c", "TVHTML5")
+            .appendQueryParameter("cver", "6.20180913")
             .build()
             .toString()
 
