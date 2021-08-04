@@ -11,9 +11,9 @@ class InputViewModel : ViewModel() {
     val errorMessageResource: LiveData<Int> = _errorMessageResource
 
     // Internally, we use a MutableLiveData to handle navigation to the selected property
-    private val _navigateToDetailsScreen = MutableLiveData<String>()
+    private val _navigateToDetailsScreen = MutableLiveData<String?>()
     // The external immutable LiveData for the navigation property
-    val navigateToDetailsScreen: LiveData<String> = _navigateToDetailsScreen
+    val navigateToDetailsScreen: LiveData<String?> = _navigateToDetailsScreen
 
     fun processUrl(url: String) {
         val regex = Regex(pattern = "^.*(youtu\\.be/|v/|u/\\w/|embed/|watch\\?v=|&v=)([^#&?]*).*")

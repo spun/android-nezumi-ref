@@ -15,9 +15,11 @@ import com.spundev.nezumi.service.DownloadWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.net.URLDecoder
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 
 
 class DetailsViewModel(val app: Application) : AndroidViewModel(app) {
@@ -56,48 +58,45 @@ class DetailsViewModel(val app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun getAllFormats(videoId: String): List<Format>? {
-        // Build "get_video_info" url
-        @Suppress("SpellCheckingInspection")
+        val body: RequestBody = """
+            {
+                context: {
+                  client: {
+                    hl: "en",
+                    clientName: "WEB",
+                    clientVersion: "2.20210721.00.00",
+                    mainAppWebInfo: { graftUrl: "/watch?v=${videoId}" },
+                  },
+                },
+                videoId: "$videoId",
+          }
+        """.trimIndent().toRequestBody("application/json".toMediaTypeOrNull())
+
+        // Api request url
         val requestUrl = Uri.Builder()
             .scheme("https")
-            .authority("www.youtube.com")
-            .appendPath("get_video_info")
-            .appendQueryParameter("video_id", videoId)
-            .appendQueryParameter("ps", "default")
-            .appendQueryParameter("eurl", "")
-            .appendQueryParameter("gl", "US")
-            .appendQueryParameter("hl", "en")
-            .appendQueryParameter("el", "detailpage")
-            .appendQueryParameter("disable_polymer", "true")
-            .appendQueryParameter("html5", "1")
-            .appendQueryParameter("c", "TVHTML5")
-            .appendQueryParameter("cver", "6.20180913")
+            .authority("youtubei.googleapis.com")
+            .appendPath("youtubei")
+            .appendPath("v1")
+            .appendPath("player")
+            .appendQueryParameter("key", "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8")
             .build()
             .toString()
 
         // Create a new request
-        val request = Request.Builder()
+        val request: Request = Request.Builder()
             .url(requestUrl)
+            .post(body)
             .build()
 
         return withContext(Dispatchers.IO) {
             // Fetch the data
             client.newCall(request).execute().use { response ->
                 response.body?.string()
-            }?.let { body ->
-                // The the body is a list of parameters divided by &.
-                // We are only interested in the "player_response" parameter.
-                body.split('&').find {
-                    it.split('=').first() == "player_response"
-                    // We extract the contentFrom this "player response"
-                }?.split('=', limit = 2)?.last()?.let { playerResponseRaw ->
-                    // Decode the value of the "player_response" content
-                    URLDecoder.decode(playerResponseRaw, "UTF-8")
-                }
-            }?.let { playerResponseDecoded ->
+            }?.let { playerResponseJson ->
                 // Parse JSON allowing unknown keys
                 val format = Json { ignoreUnknownKeys = true }
-                format.decodeFromString(PlayerResponse.serializer(), playerResponseDecoded)
+                format.decodeFromString(PlayerResponse.serializer(), playerResponseJson)
             }?.let {
                 // Return base formats + adaptive formats
                 it.streamingData.formats + it.streamingData.adaptiveFormats
