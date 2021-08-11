@@ -1,7 +1,6 @@
 package com.spundev.nezumi.service
 
 import android.annotation.TargetApi
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.ContentValues
@@ -16,15 +15,24 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.spundev.nezumi.R
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okio.Source
-import okio.buffer
-import okio.sink
+import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
+import java.net.SocketException
+import java.text.CharacterIterator
+import java.text.StringCharacterIterator
 
 
 class DownloadWorker(
-    context: Context, workerParams: WorkerParameters
+    val context: Context,
+    workerParams: WorkerParameters
 ) : CoroutineWorker(context, workerParams) {
 
     private val notificationManager =
@@ -32,31 +40,98 @@ class DownloadWorker(
 
     override suspend fun doWork(): Result {
 
+        // get download url from the input data
         val downloadUrl = inputData.getString(DOWNLOAD_URL)
 
         return try {
-            setForeground(createForegroundInfo())
+            // Set this work as a foreground service with a notification
+            val notificationId = downloadUrl.hashCode()
+            val notificationBuilder = createNotificationBuilder()
+            // Use unique notification ids for each url
+            val foregroundInfo = ForegroundInfo(notificationId, notificationBuilder.build())
+            setForeground(foregroundInfo)
+
             if (downloadUrl == null || TextUtils.isEmpty(downloadUrl)) {
                 throw IllegalArgumentException("Invalid input url")
             }
-            //Start download
-            val okhttpClient = createOkHttpClient()
-            prepareDownload(okhttpClient, downloadUrl)
 
+            // Start download
+            val okHttpClient = OkHttpClient.Builder().build()
+
+            // Note: This won't return until the given block and all its children coroutines
+            // are completed
+            coroutineScope {
+                // Start file download
+                val filename = downloadUrl.hashCode().toString()
+                try {
+                    var percentage = 0
+                    var lastPercentageUpdate = -1
+                    // startDownload gives us a flow with download progress updates
+                    startDownload(okHttpClient, downloadUrl, filename)
+                        .conflate() // Ignore stale values
+                        .collect { (bytesDownloaded, bytesTotal) ->
+                            // If we know the final size of the file
+                            if (bytesTotal != -1L) {
+                                // Calculate the progress percentage
+                                percentage = (100 * bytesDownloaded / bytesTotal).toInt()
+                                // Only update if the value is different from the last update
+                                if (percentage != lastPercentageUpdate) {
+                                    lastPercentageUpdate = percentage
+                                    // Update notification progress
+                                    notificationBuilder.setProgress(100, percentage, false)
+                                    notificationManager.notify(
+                                        notificationId,
+                                        notificationBuilder.build()
+                                    )
+                                }
+                            } else {
+                                // If we don't know the progress percentage, we can show the downloaded
+                                // bytes in the notification
+                                notificationBuilder.setContentTitle(
+                                    humanReadableByteCountSI(bytesDownloaded)
+                                )
+                                notificationManager.notify(
+                                    notificationId,
+                                    notificationBuilder.build()
+                                )
+                            }
+
+                            // We shouldn't update the notification everytime we have new info.
+                            // Android has a limit for notification updates and in Nougat it was
+                            // reduced to 10 updates every second per package.
+                            // More info: https://saket.me/android-7-nougat-rate-limiting-notifications/
+                            // Update notification every second
+                            delay(1000)
+                        }
+                } catch (socketException: SocketException) {
+                    // This exception can be thrown when calling cancel() in a okHttp call. Since we
+                    // use cancel() to stop a running download, this exception is expected in some
+                    // situations. To check if the exception was caused due to a cancellation, we
+                    // check if the scope is still active
+                    if (isActive) {
+                        // Unexpected SocketException while scope is still active, notify
+                        Log.e(TAG, "Scope isActive() value is $isActive", socketException)
+                    }
+                    // Else, expected. Ignore and allow the cancellation exception to be caught
+                }
+            }
+            // At this point, the download has been completed successfully
+            Log.d(TAG, "Success!")
             Result.success()
+
         } catch (throwable: Throwable) {
-            Log.e(TAG, "Download error", throwable)
+            // This catch block is different from the one catching "CancellationException", we
+            // should have an active scope that we can use to clean any partial download.
+            Log.e(TAG, "Throwable catch", throwable)
             Result.failure()
         }
     }
 
-    private fun createOkHttpClient(): OkHttpClient {
-        return OkHttpClient.Builder().build()
-    }
-
-    private fun prepareDownload(client: OkHttpClient, downloadUri: String) {
-
-        // https://developer.android.com/training/data-storage/shared/media#add-item
+    private suspend fun startDownload(
+        client: OkHttpClient,
+        downloadUri: String,
+        filename: String,
+    ) = flow<Pair<Long, Long>> {
 
         // Add a specific media item.
         val resolver = applicationContext.contentResolver
@@ -85,7 +160,7 @@ class DownloadWorker(
             }
         }
 
-        // Keeps a handle to the new song's URI in case we need to modify it later.
+        // Keeps a handle to the new video's URI in case we need to modify it later.
         val newVideoUri = resolver.insert(videoCollection, newVideoDetails)
         val outputStream = resolver.openOutputStream(newVideoUri!!, "w")
 
@@ -95,63 +170,76 @@ class DownloadWorker(
 
         client.newCall(request).execute().use { response ->
             // https://stackoverflow.com/a/29012988
-            val sink = outputStream!!.sink().buffer()
-            sink.writeAll(response.body?.source() as Source)
-            sink.close()
+            if (!response.isSuccessful) throw IOException("Unexpected code $response")
 
-            // Now that we're finished, release the "pending" status, and allow other apps
-            // to play the video.
-            newVideoDetails.apply {
-                clear()
-                put(
-                    MediaStore.Video.Media.SIZE,
-                    response.body!!.contentLength()
-                ) // should be in unit of bytes
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Audio.Media.IS_PENDING, 0)
+            response.body?.let { responseBody ->
+
+                // Get inputStream
+                val inputStream = responseBody.byteStream()
+
+                // Get total file size from header
+                val contentLengthHeader = response.header("Content-Length")
+                val contentLength = contentLengthHeader?.toLongOrNull() ?: -1L
+
+                // Although we might not know the final final size, it's useful to use the copy with
+                // progress to deal with cancellations
+                outputStream?.let {
+                    inputStream.copyToWithProgressFlow(it).collect { bytesCopied ->
+                        emit(bytesCopied to contentLength)
+                    }
                 }
-            }.also { details ->
-                resolver.update(newVideoUri, details, null, null)
+
+                // We are manually closing instead of using "use { }" on AutoCloseables to avoid
+                // chaining multiple "use" blocks
+                responseBody.close()
+                outputStream?.close()
+
+                // Now that the download is completed, release the "pending" status, and allow
+                // other apps to play the video.
+                newVideoDetails.apply {
+                    clear()
+                    put(
+                        MediaStore.Video.Media.SIZE,
+                        response.body!!.contentLength()
+                    ) // should be in unit of bytes
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Video.Media.IS_PENDING, 0)
+                    }
+                }.also { details ->
+                    resolver.update(newVideoUri, details, null, null)
+                }
             }
         }
-    }
-
-
-    /**
-     * Create ForegroundInfo required to run a Worker in a foreground service.
-     */
-    private fun createForegroundInfo(): ForegroundInfo {
-        // Use a different id for each Notification.
-        val notificationId = 1
-        return ForegroundInfo(notificationId, createNotificationBuilder())
-    }
+    }.flowOn(Dispatchers.IO)
 
     /**
      * Create the notification and required channel (O+) for running work
      * in a foreground service.
      */
-    private fun createNotificationBuilder(): Notification {
+    private fun createNotificationBuilder(): NotificationCompat.Builder {
         val context = applicationContext
-        val channelId = context.getString(R.string.download_notification_channel_id)
-        val title = context.getString(R.string.download_notification_title)
-        val cancel = context.getString(R.string.download_notification_cancel_action)
-        val name = context.getString(R.string.download_notification_channel_name)
-        val description = context.getString(R.string.download_notification_channel_description)
+        val channelId = context.getString(R.string.file_download_notification_channel_id)
+        val title = context.getString(R.string.file_download_notification_title)
+        val cancel = context.getString(R.string.file_download_notification_cancel_action)
+        val name = context.getString(R.string.file_download_notification_channel_name)
+        val description = context.getString(R.string.file_download_notification_channel_description)
         // This PendingIntent can be used to cancel the Worker.
         val intent = WorkManager.getInstance(context).createCancelPendingIntent(id)
 
-        val builder = NotificationCompat.Builder(context, channelId)
-            .setContentTitle(title)
-            .setTicker(title)
-            .setSmallIcon(R.drawable.ic_download_notification_24)
-            .setOngoing(true)
-            .addAction(R.drawable.ic_cancel_download, cancel, intent)
+        val builder = NotificationCompat.Builder(context, channelId).apply {
+            setContentTitle(title)
+            setTicker(title)
+            setSmallIcon(R.drawable.ic_notification_download_animation)
+            setOngoing(true)
+            addAction(R.drawable.ic_cancel_download, cancel, intent)
+            setProgress(100, 0, true)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             createNotificationChannel(channelId, name, description).also {
                 builder.setChannelId(it.id)
             }
         }
-        return builder.build()
+        return builder
     }
 
     /**
@@ -175,6 +263,41 @@ class DownloadWorker(
     companion object {
         const val DOWNLOAD_URL = "DOWNLOAD_URL"
     }
+}
+
+// Extracted from InputStream "copyTo", modified to expose a progress percentage
+fun InputStream.copyToWithProgressFlow(
+    out: OutputStream,
+    bufferSize: Int = DEFAULT_BUFFER_SIZE
+) = flow {
+    var bytesCopied: Long = 0
+    val buffer = ByteArray(bufferSize)
+    var bytes = read(buffer)
+    while (bytes >= 0 && currentCoroutineContext().isActive) {
+        out.write(buffer, 0, bytes)
+        bytesCopied += bytes
+        bytes = read(buffer)
+
+        emit(bytesCopied)
+    }
+}.flowOn(Dispatchers.IO)
+
+/**
+ * Convert a byte size number to a human readable string
+ * From "The most copied Stack Overflow snippet" !
+ * https://stackoverflow.com/a/3758880
+ */
+fun humanReadableByteCountSI(bytesValue: Long): String {
+    var bytes = bytesValue
+    if (-1000 < bytes && bytes < 1000) {
+        return "$bytes B"
+    }
+    val ci: CharacterIterator = StringCharacterIterator("kMGTPE")
+    while (bytes <= -999_950 || bytes >= 999_950) {
+        bytes /= 1000
+        ci.next()
+    }
+    return String.format("%.1f %cB", bytes / 1000.0, ci.current())
 }
 
 private const val TAG = "DownloadWorker"
