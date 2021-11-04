@@ -10,12 +10,12 @@ import com.spundev.nezumi.databinding.RvFormatItemBinding
 import com.spundev.nezumi.model.Format
 
 class DetailsAdapter internal constructor(
-        context: Context,
-        val clickOpenOnBrowserListener: (url: String) -> Unit,
-        val clickDownloadListener: (url: String) -> Unit,
-        val longClickListener: (url: String) -> Unit
+    context: Context,
+    val clickOpenOnBrowserListener: (format: Format) -> Unit,
+    val clickDownloadListener: (format: Format) -> Unit,
+    val longClickListener: (format: Format) -> Unit
 ) : ListAdapter<Format, DetailsAdapter.FormatViewHolder>(object :
-        DiffUtil.ItemCallback<Format>() {
+    DiffUtil.ItemCallback<Format>() {
     override fun areItemsTheSame(oldItem: Format, newItem: Format) = oldItem.itag == newItem.itag
     override fun areContentsTheSame(oldItem: Format, newItem: Format) = oldItem == newItem
 }) {
@@ -27,19 +27,33 @@ class DetailsAdapter internal constructor(
     }
 
     override fun onBindViewHolder(holder: FormatViewHolder, position: Int) =
-            holder.bindTo(getItem(position))
+        holder.bindTo(getItem(position))
 
     inner class FormatViewHolder(
-            private val binding: RvFormatItemBinding
+        private val binding: RvFormatItemBinding
     ) : RecyclerView.ViewHolder(binding.root) {
 
-        fun bindTo(item: Format) {
-            binding.formatTextView.text = item.description
-            binding.openBrowserImageView.setOnClickListener { clickOpenOnBrowserListener(item.url) }
-            binding.downloadImageView.setOnClickListener { clickDownloadListener(item.url) }
+        var currentItem: Format? = null
+
+        init {
+            binding.openBrowserImageView.setOnClickListener {
+                currentItem?.let(clickOpenOnBrowserListener)
+            }
+            binding.downloadImageView.setOnClickListener {
+                currentItem?.let(clickDownloadListener)
+            }
             binding.formatTextView.setOnLongClickListener {
-                longClickListener(item.url)
+                currentItem?.let(longClickListener)
                 true
+            }
+        }
+
+        fun bindTo(item: Format?) {
+            currentItem = item
+            if (item != null) {
+                binding.formatTextView.text = item.description
+            } else {
+                binding.formatTextView.text = ""
             }
         }
     }

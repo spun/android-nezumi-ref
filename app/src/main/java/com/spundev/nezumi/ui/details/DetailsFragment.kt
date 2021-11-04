@@ -16,14 +16,21 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
-import androidx.lifecycle.Observer
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.fragment.navArgs
+import androidx.recyclerview.widget.ConcatAdapter
 import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.snackbar.Snackbar
 import com.spundev.nezumi.R
 import com.spundev.nezumi.databinding.DetailsFragmentBinding
+import com.spundev.nezumi.model.Format
 import com.spundev.nezumi.util.autoCleared
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.launch
 
 class DetailsFragment : Fragment() {
 
@@ -34,7 +41,7 @@ class DetailsFragment : Fragment() {
 
     private val viewModel: DetailsViewModel by viewModels()
 
-    private var selectedDownloadUrl = ""
+    private var selectedFormat: Format? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -46,14 +53,18 @@ class DetailsFragment : Fragment() {
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+
+        val headerAdapter = DetailsHeaderAdapter(requireContext())
         val detailsAdapter = DetailsAdapter(
             requireContext(),
-            this::openInBrowser,
-            this::download,
-            this::copyToClipboard
+            clickOpenOnBrowserListener = { openInBrowser(it.url) },
+            clickDownloadListener = { download(it) },
+            longClickListener = { copyToClipboard(it.url) }
         )
+
+        val concatAdapter = ConcatAdapter(headerAdapter, detailsAdapter)
         binding.episodesRecyclerview.apply {
-            adapter = detailsAdapter
+            adapter = concatAdapter
             layoutManager = LinearLayoutManager(requireContext())
             addItemDecoration(
                 DividerItemDecoration(
@@ -63,7 +74,16 @@ class DetailsFragment : Fragment() {
             )
         }
 
-        viewModel.formatsList.observe(viewLifecycleOwner, Observer(detailsAdapter::submitList))
+        viewLifecycleOwner.lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    viewModel.videoDetails.filterNotNull().collect(headerAdapter::setContent)
+                }
+                launch {
+                    viewModel.videoFormats.filterNotNull().collect(detailsAdapter::submitList)
+                }
+            }
+        }
 
         if (savedInstanceState == null) {
             viewModel.setVideoId(args.videoId)
@@ -83,12 +103,12 @@ class DetailsFragment : Fragment() {
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) {
                 // permission was granted. Do the task you need to do.
-                viewModel.downloadWithOkHTTP(selectedDownloadUrl)
+                viewModel.downloadFormat(selectedFormat)
             } /* else { // permission denied. Disable the functionality. } */
         }
 
 
-    private fun download(url: String) {
+    private fun download(format: Format) {
         // Don't unnecessarily request storage-related permissions for devices that run Android 10 or higher.
         val isScopedStorageAvailable = Build.VERSION.SDK_INT >= 29
         val isWriteExternalStorageGranted = ContextCompat.checkSelfPermission(
@@ -109,19 +129,19 @@ class DetailsFragment : Fragment() {
                     Snackbar.LENGTH_INDEFINITE
                 ).setAction(android.R.string.ok) {
                     // We save the url in a scope the request permission response can read
-                    selectedDownloadUrl = url
+                    selectedFormat = format
                     // Request permission
                     requestWritePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                 }.show()
             } else {
                 // We save the url in a scope the request permission response can read
-                selectedDownloadUrl = url
+                selectedFormat = format
                 // No explanation needed, we can request the permission.
                 requestWritePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             }
         } else {
             // Permission has already been granted
-            viewModel.downloadWithOkHTTP(url)
+            viewModel.downloadFormat(format)
         }
     }
 

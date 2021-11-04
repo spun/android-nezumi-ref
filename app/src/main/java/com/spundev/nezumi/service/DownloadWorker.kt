@@ -10,10 +10,7 @@ import android.provider.MediaStore
 import android.text.TextUtils
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.work.CoroutineWorker
-import androidx.work.ForegroundInfo
-import androidx.work.WorkManager
-import androidx.work.WorkerParameters
+import androidx.work.*
 import com.spundev.nezumi.R
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
@@ -42,6 +39,8 @@ class DownloadWorker(
 
         // get download url from the input data
         val downloadUrl = inputData.getString(DOWNLOAD_URL)
+        val downloadFilename =
+            inputData.getString(DOWNLOAD_FILENAME) ?: downloadUrl.hashCode().toString()
 
         return try {
             // Set this work as a foreground service with a notification
@@ -62,12 +61,11 @@ class DownloadWorker(
             // are completed
             coroutineScope {
                 // Start file download
-                val filename = downloadUrl.hashCode().toString()
                 try {
                     var percentage = 0
                     var lastPercentageUpdate = -1
                     // startDownload gives us a flow with download progress updates
-                    startDownload(okHttpClient, downloadUrl, filename)
+                    startDownload(okHttpClient, downloadUrl, downloadFilename)
                         .conflate() // Ignore stale values
                         .collect { (bytesDownloaded, bytesTotal) ->
                             // If we know the final size of the file
@@ -79,6 +77,12 @@ class DownloadWorker(
                                     lastPercentageUpdate = percentage
                                     // Update notification progress
                                     notificationBuilder.setProgress(100, percentage, false)
+                                    val progressText =
+                                        StringBuilder(humanReadableByteCountSI(bytesDownloaded))
+                                            .append(" / ")
+                                            // TODO: Avoid calculation, bytesTotal won't change
+                                            .append(humanReadableByteCountSI(bytesTotal))
+                                    notificationBuilder.setContentText(progressText)
                                     notificationManager.notify(
                                         notificationId,
                                         notificationBuilder.build()
@@ -87,7 +91,7 @@ class DownloadWorker(
                             } else {
                                 // If we don't know the progress percentage, we can show the downloaded
                                 // bytes in the notification
-                                notificationBuilder.setContentTitle(
+                                notificationBuilder.setContentText(
                                     humanReadableByteCountSI(bytesDownloaded)
                                 )
                                 notificationManager.notify(
@@ -146,7 +150,7 @@ class DownloadWorker(
 
         // Publish a new video.
         val newVideoDetails = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, "video")
+            put(MediaStore.Video.Media.DISPLAY_NAME, filename)
             put(
                 MediaStore.Video.Media.DATE_ADDED,
                 System.currentTimeMillis() / 1000
@@ -262,6 +266,29 @@ class DownloadWorker(
 
     companion object {
         const val DOWNLOAD_URL = "DOWNLOAD_URL"
+        const val DOWNLOAD_FILENAME = "DOWNLOAD_FILENAME"
+        const val WORK_NAME: String = "com.spundev.nezumi.service.DownloadWorker"
+
+        fun enqueueDownload(context: Context, url: String, filename: String?) {
+
+            val downloadData = workDataOf(
+                DOWNLOAD_URL to url,
+                DOWNLOAD_FILENAME to filename
+            )
+
+            val downloadRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
+                .setInputData(downloadData)
+                .setConstraints(
+                    Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .build()
+                )
+                .setInputData(downloadData)
+                .build()
+
+            val workManager = WorkManager.getInstance(context)
+            workManager.enqueue(downloadRequest)
+        }
     }
 }
 

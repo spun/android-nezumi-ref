@@ -2,17 +2,16 @@ package com.spundev.nezumi.ui.details
 
 import android.app.Application
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.MutableLiveData
-import androidx.lifecycle.liveData
-import androidx.lifecycle.switchMap
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
-import androidx.work.workDataOf
+import androidx.lifecycle.viewModelScope
 import com.spundev.nezumi.model.Format
 import com.spundev.nezumi.model.PlayerResponse
+import com.spundev.nezumi.model.VideoDetails
 import com.spundev.nezumi.service.DownloadWorker
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -26,45 +25,48 @@ class DetailsViewModel(val app: Application) : AndroidViewModel(app) {
     // TODO: Add DI
     private val client = OkHttpClient.Builder().build()
 
-    private val _videoId: MutableLiveData<String> = MutableLiveData()
+    private val _currentVideoId = MutableStateFlow("")
+    private val currentVideoId: StateFlow<String> = _currentVideoId
+
+    private val playerResponse: StateFlow<PlayerResponse?> = currentVideoId.map { videoId ->
+        getPlayerResponse(videoId)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = null
+    )
+
+    val videoDetails: StateFlow<VideoDetails?> =
+        playerResponse.filterNotNull().map { it.videoDetails }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = null
+        )
+    val videoFormats: StateFlow<List<Format>?> = playerResponse.filterNotNull().map {
+        // Return base formats + adaptive formats
+        Log.d(TAG, "Mapping again: ")
+        it.streamingData.formats + it.streamingData.adaptiveFormats
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = null
+    )
 
     private var _currentFormatSelectionPosition: MutableLiveData<Int> = MutableLiveData(-1)
 
-    val isSelectionValid = _currentFormatSelectionPosition.switchMap {
-        liveData { emit(it >= 0) }
-    }
-
-    // Live data containing all the available formats. If the videoId
-    // changes, it will trigger a new fetching operation of the video data.
-    val formatsList = _videoId.switchMap { id ->
-        liveData {
-            emit(getAllFormats(id))
-        }
-    }
-
     // Set / change the video id for which we will get the data.
     fun setVideoId(newVideoId: String) {
-        _videoId.value = newVideoId
+        _currentVideoId.value = newVideoId
     }
 
-    fun setCurrentFormatSelectionPosition(newPosition: Int) {
-        _currentFormatSelectionPosition.value = newPosition
-    }
-
-    fun getSelectedFormat(): Format? {
-        return _currentFormatSelectionPosition.value?.let {
-            formatsList.value?.get(it)
-        }
-    }
-
-    private suspend fun getAllFormats(videoId: String): List<Format>? {
+    private suspend fun getPlayerResponse(videoId: String): PlayerResponse? {
         val body: RequestBody = """
             {
                 context: {
                   client: {
                     hl: "en",
-                    clientName: "WEB",
-                    clientVersion: "2.20210721.00.00",
+                    clientName: "ANDROID",
+                    clientVersion: "16.20",
                     mainAppWebInfo: { graftUrl: "/watch?v=${videoId}" },
                   },
                 },
@@ -97,21 +99,14 @@ class DetailsViewModel(val app: Application) : AndroidViewModel(app) {
                 // Parse JSON allowing unknown keys
                 val format = Json { ignoreUnknownKeys = true }
                 format.decodeFromString(PlayerResponse.serializer(), playerResponseJson)
-            }?.let {
-                // Return base formats + adaptive formats
-                it.streamingData.formats + it.streamingData.adaptiveFormats
             }
         }
     }
 
-
-    fun downloadWithOkHTTP(url: String) {
-        val downloadData = workDataOf(DownloadWorker.DOWNLOAD_URL to url)
-        val downloadWorkRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
-            .setInputData(downloadData)
-            .build()
-        WorkManager.getInstance(app)
-            .enqueue(downloadWorkRequest)
+    fun downloadFormat(format: Format?) {
+        format?.let {
+            DownloadWorker.enqueueDownload(app, format.url, videoDetails.value?.title)
+        }
     }
 
 
@@ -160,3 +155,6 @@ class DetailsViewModel(val app: Application) : AndroidViewModel(app) {
 //        app.unregisterReceiver(onDownloadComplete)
 //    }
 }
+
+
+private const val TAG = "DetailsViewModel"
