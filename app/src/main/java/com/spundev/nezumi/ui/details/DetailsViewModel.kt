@@ -95,17 +95,17 @@ class DetailsViewModel(val app: Application) : AndroidViewModel(app) {
             // Fetch the data
             client.newCall(request).execute().use { response ->
                 response.body?.string()
-            }?.let { playerResponseJson ->
+            }?.let { playerResponse ->
                 // Parse JSON allowing unknown keys
                 val format = Json { ignoreUnknownKeys = true }
-                format.decodeFromString(PlayerResponse.serializer(), playerResponseJson)
+                format.decodeFromString(PlayerResponse.serializer(), playerResponse)
             }
         }
     }
 
     fun downloadFormat(format: Format?) {
         format?.let {
-            DownloadWorker.enqueueDownload(app, format.url, videoDetails.value?.title)
+            DownloadWorker.enqueueDownload(app, it.url, videoDetails.value?.title, it.mimeType)
         }
     }
 

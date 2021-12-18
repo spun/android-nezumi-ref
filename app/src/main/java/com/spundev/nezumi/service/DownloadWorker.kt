@@ -6,12 +6,14 @@ import android.app.NotificationManager
 import android.content.ContentValues
 import android.content.Context
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import android.text.TextUtils
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.*
 import com.spundev.nezumi.R
+import com.spundev.nezumi.util.MimeType
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.conflate
@@ -19,6 +21,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -41,6 +44,8 @@ class DownloadWorker(
         val downloadUrl = inputData.getString(DOWNLOAD_URL)
         val downloadFilename =
             inputData.getString(DOWNLOAD_FILENAME) ?: downloadUrl.hashCode().toString()
+        val downloadMimeType =
+            inputData.getString(DOWNLOAD_FILE_MIMETYPE) ?: "video/mp4"
 
         return try {
             // Set this work as a foreground service with a notification
@@ -65,7 +70,7 @@ class DownloadWorker(
                     var percentage = 0
                     var lastPercentageUpdate = -1
                     // startDownload gives us a flow with download progress updates
-                    startDownload(okHttpClient, downloadUrl, downloadFilename)
+                    startDownload(okHttpClient, downloadUrl, downloadFilename, downloadMimeType)
                         .conflate() // Ignore stale values
                         .collect { (bytesDownloaded, bytesTotal) ->
                             // If we know the final size of the file
@@ -135,6 +140,7 @@ class DownloadWorker(
         client: OkHttpClient,
         downloadUri: String,
         filename: String,
+        downloadMimeType: String,
     ) = flow<Pair<Long, Long>> {
 
         // Add a specific media item.
@@ -150,17 +156,32 @@ class DownloadWorker(
 
         // Publish a new video.
         val newVideoDetails = ContentValues().apply {
+            put(MediaStore.Video.Media.TITLE, filename)
             put(MediaStore.Video.Media.DISPLAY_NAME, filename)
-            put(
-                MediaStore.Video.Media.DATE_ADDED,
-                System.currentTimeMillis() / 1000
-            ) // should be in unit of seconds
-            put(
-                MediaStore.Video.Media.DATE_MODIFIED,
-                System.currentTimeMillis() / 1000
-            ) // should be in unit of seconds
+            put(MediaStore.Video.Media.MIME_TYPE, downloadMimeType)
+            // date values should be in seconds
+            put(MediaStore.Video.Media.DATE_ADDED, System.currentTimeMillis() / 1000)
+            put(MediaStore.Video.Media.DATE_MODIFIED, System.currentTimeMillis() / 1000)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.Video.Media.IS_PENDING, 1)
+            } else {
+                // IMPORTANT: In devices < 29, the video created by the MediaStore doesn't use
+                //  the filename from TITLE or DISPLAY_NAME, it uses the current time in millis
+                //  as filename and 3gp as extension (¿?).
+                //  This is not avoidable, some answers (https://stackoverflow.com/a/65627697)
+                //  suggest Updating the DISPLAY_NAME after the insert call. This could fix the
+                //  problem with file apps that use the DISPLAY_NAME, but other apps use the
+                //  filename directly and that value would still be wrong.
+                //  To avoid this, we are going to create the file manually with the filename value
+                //  that we want and then insert the data to MediaStore with the path of our file.
+                val directory =
+                    "${Environment.getExternalStorageDirectory().absolutePath}${File.separator}${Environment.DIRECTORY_MOVIES}"
+                val fullFilename =
+                    MimeType.getExtensionFromMimeType(downloadMimeType).let { extension ->
+                        if (extension.isNotEmpty()) "$filename.$extension" else filename
+                    }
+                val newVideo = File(directory, fullFilename)
+                put(MediaStore.Video.Media.DATA, newVideo.absolutePath)
             }
         }
 
@@ -202,10 +223,7 @@ class DownloadWorker(
                 // other apps to play the video.
                 newVideoDetails.apply {
                     clear()
-                    put(
-                        MediaStore.Video.Media.SIZE,
-                        response.body!!.contentLength()
-                    ) // should be in unit of bytes
+                    put(MediaStore.Video.Media.SIZE, response.body!!.contentLength()) // bytes
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         put(MediaStore.Video.Media.IS_PENDING, 0)
                     }
@@ -265,15 +283,17 @@ class DownloadWorker(
     }
 
     companion object {
-        const val DOWNLOAD_URL = "DOWNLOAD_URL"
-        const val DOWNLOAD_FILENAME = "DOWNLOAD_FILENAME"
+        private const val DOWNLOAD_URL = "DOWNLOAD_URL"
+        private const val DOWNLOAD_FILENAME = "DOWNLOAD_FILENAME"
+        private const val DOWNLOAD_FILE_MIMETYPE = "DOWNLOAD_FILE_MIMETYPE"
         const val WORK_NAME: String = "com.spundev.nezumi.service.DownloadWorker"
 
-        fun enqueueDownload(context: Context, url: String, filename: String?) {
+        fun enqueueDownload(context: Context, url: String, filename: String?, mimeType: String?) {
 
             val downloadData = workDataOf(
                 DOWNLOAD_URL to url,
-                DOWNLOAD_FILENAME to filename
+                DOWNLOAD_FILENAME to filename,
+                DOWNLOAD_FILE_MIMETYPE to mimeType
             )
 
             val downloadRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
