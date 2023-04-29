@@ -65,8 +65,8 @@ class DetailsViewModel(val app: Application) : AndroidViewModel(app) {
                 context: {
                   client: {
                     hl: "en",
-                    clientName: "ANDROID",
-                    clientVersion: "16.20",
+                    clientName: "WEB",
+                    clientVersion: "2.20230427.04.00",
                     mainAppWebInfo: { graftUrl: "/watch?v=${videoId}" },
                   },
                 },
