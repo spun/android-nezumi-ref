@@ -20,4 +20,8 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
--keep public class androidx.navigation.fragment.NavHostFragment
+# Ignore "Missing class" warnings
+# https://github.com/square/okhttp/issues/6258
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
